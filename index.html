@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vote familial – Destinations de voyage</title>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #e0eafc, #cfdef3);
+      color: #222;
+    }
+    header {
+      text-align: center;
+      padding: 20px;
+      background: #4e73df;
+      color: white;
+    }
+    h1 { margin: 0; font-size: 1.8rem; }
+    nav {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      background: #375ac3;
+      padding: 10px;
+    }
+    nav a {
+      color: white;
+      text-decoration: none;
+      font-weight: bold;
+    }
+    nav a.active { text-decoration: underline; }
+    .container { max-width: 950px; margin: 0 auto; padding: 20px; }
+    .card {
+      background: #fff;
+      border-radius: 20px;
+      padding: 20px;
+      margin-bottom: 25px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+    }
+    h2 { font-size: 1.3rem; margin-top: 0; color: #4e73df; }
+    input, textarea, select, button {
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      font-size: 1rem;
+      width: 100%;
+      margin: 5px 0;
+    }
+    button {
+      background: #4e73df;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover { background: #375ac3; }
+    .list { display: grid; gap: 12px; }
+    .proposal { border: 1px solid #ddd; border-radius: 12px; padding: 12px; background: #fafafa; }
+    .proposal h3 { margin: 0 0 6px; font-size: 1.1rem; }
+    .stars span { font-size: 1.4rem; cursor: pointer; color: #ccc; }
+    .stars span.active { color: #f5b50a; }
+    .results .item { padding: 6px 0; border-bottom: 1px solid #eee; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏝️ Vote familial</h1>
+  </header>
+  <nav>
+    <a href="#home" id="link-home" class="active">🏠 Maison</a>
+    <a href="#profile" id="link-profile">👤 Profil</a>
+    <a href="#ranking" id="link-ranking">🏆 Classement</a>
+  </nav>
+
+  <div class="container">
+    <!-- Page Maison -->
+    <section id="page-home" class="page">
+      <div class="card">
+        <h2>Ajouter un membre</h2>
+        <input id="memberName" placeholder="Prénom" />
+        <button id="addMember">Ajouter</button>
+        <div id="memberList" class="list small"></div>
+      </div>
+
+      <div class="card">
+        <h2>Proposer une destination</h2>
+        <select id="proposalAuthor"></select>
+        <input id="destinationTitle" placeholder="Destination (ex: Rome)" />
+        <textarea id="destinationArgs" placeholder="Arguments pour cette destination"></textarea>
+        <button id="addProposal">Ajouter</button>
+        <p class="small">Chaque membre est limité à 2 propositions.</p>
+      </div>
+    </section>
+
+    <!-- Page Profil -->
+    <section id="page-profile" class="page hidden">
+      <div class="card">
+        <h2>Noter les destinations</h2>
+        <label for="activeMember">Je suis : </label>
+        <select id="activeMember"></select>
+        <div id="proposalList" class="list"></div>
+      </div>
+    </section>
+
+    <!-- Page Classement -->
+    <section id="page-ranking" class="page hidden">
+      <div class="card">
+        <h2>Classement général</h2>
+        <div id="results" class="results"></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ⚡ Configure ton projet Firebase ici
+    const firebaseConfig = {
+      apiKey: "",
+      authDomain: "",
+      databaseURL: "",
+      projectId: "",
+      storageBucket: "",
+      messagingSenderId: "",
+      appId: ""
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const el = (id) => document.getElementById(id);
+
+    // Navigation entre pages
+    const pages = { home: el('page-home'), profile: el('page-profile'), ranking: el('page-ranking') };
+    function showPage(page){
+      Object.keys(pages).forEach(p=> pages[p].classList.add('hidden'));
+      pages[page].classList.remove('hidden');
+      document.querySelectorAll('nav a').forEach(a=>a.classList.remove('active'));
+      el('link-'+page).classList.add('active');
+    }
+    document.querySelectorAll('nav a').forEach(a=>{
+      a.addEventListener('click', e=>{
+        e.preventDefault();
+        const target = a.getAttribute('href').replace('#','');
+        showPage(target);
+      });
+    });
+
+    // Fonctions Firebase
+    function addMember(name){ db.ref('members/'+name).set(true); }
+    function addProposal(author, title, args){
+      const id = Date.now();
+      db.ref('proposals/'+id).set({id, author, title, args});
+    }
+    function rateProposal(proposalId, member, score){ db.ref('ratings/'+proposalId+'/'+member).set(score); }
+
+    // Écoute en temps réel
+    function listenUpdates(){
+      db.ref('members').on('value', snap=>{
+        const members = snap.val()||{};
+        const list = el('memberList');
+        list.innerHTML = '';
+        const authorSel = el('proposalAuthor');
+        const activeSel = el('activeMember');
+        authorSel.innerHTML = '<option value="">— Auteur —</option>';
+        activeSel.innerHTML = '<option value="">— Choisir un membre —</option>';
+        Object.keys(members).forEach(m=>{
+          const div = document.createElement('div');
+          div.textContent = m;
+          list.appendChild(div);
+          [authorSel, activeSel].forEach(sel=>{
+            const opt = document.createElement('option');
+            opt.value=m; opt.textContent=m;
+            sel.appendChild(opt);
+          });
+        });
+      });
+
+      db.ref('proposals').on('value', snap=>{
+        const proposals = snap.val()||{};
+        const list = el('proposalList');
+        list.innerHTML = '';
+        const active = el('activeMember').value;
+        Object.values(proposals).forEach(p=>{
+          const div = document.createElement('div');
+          div.className = 'proposal';
+          div.innerHTML = `<h3>${p.title}</h3><p>Proposé par ${p.author}</p><p>${p.args||''}</p>`;
+          if(active){
+            const stars = document.createElement('div');
+            stars.className = 'stars';
+            for(let i=1;i<=5;i++){
+              const s=document.createElement('span');
+              s.textContent='★';
+              s.onclick=()=> rateProposal(p.id, active, i);
+              db.ref('ratings/'+p.id+'/'+active).once('value',v=>{ if(v.val()>=i) s.classList.add('active'); });
+              stars.appendChild(s);
+            }
+            div.appendChild(stars);
+          }
+          list.appendChild(div);
+        });
+      });
+
+      db.ref('ratings').on('value', snap=>{
+        const ratings = snap.val()||{};
+        db.ref('proposals').once('value', psnap=>{
+          const proposals = psnap.val()||{};
+          const scores = Object.values(proposals).map(p=>{
+            const vals = ratings[p.id]?Object.values(ratings[p.id]):[];
+            const avg = vals.length? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2):0;
+            return {title:p.title, author:p.author, avg:parseFloat(avg)};
+          });
+          scores.sort((a,b)=>b.avg-a.avg);
+          const box = el('results');
+          box.innerHTML = '';
+          scores.forEach(s=>{
+            const div = document.createElement('div');
+            div.className='item';
+            div.textContent=`${s.title} (par ${s.author}) – Moyenne: ${s.avg}`;
+            box.appendChild(div);
+          });
+        });
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded',()=>{
+      el('addMember').onclick=()=>{
+        const name=el('memberName').value.trim();
+        if(name) addMember(name);
+        el('memberName').value='';
+      };
+      el('addProposal').onclick=()=>{
+        const author=el('proposalAuthor').value;
+        const title=el('destinationTitle').value.trim();
+        const args=el('destinationArgs').value.trim();
+        if(author && title) addProposal(author,title,args);
+        el('destinationTitle').value='';
+        el('destinationArgs').value='';
+      };
+      el('activeMember').onchange=()=> listenUpdates();
+      listenUpdates();
+    });
+  </script>
+</body>
+</html>
